@@ -672,10 +672,10 @@ public class FeliCaLib {
             int serviceHandle = (Integer) f.get(tag);  
             
             //INfcTag#transceive
-            Method transeive = tagService.getClass().getMethod("transceive", Integer.TYPE, byte[].class);
+            Method transceive = tagService.getClass().getMethod("transceive", Integer.TYPE, byte[].class);
 
             //Log.d(TAG, "invoking transceive commandPacket :" +  Util.getHexString(commandPacket) + "\n");
-            byte[] response = (byte[])transeive.invoke(tagService, serviceHandle, commandPacket);
+            byte[] response = (byte[])transceive.invoke(tagService, serviceHandle, commandPacket);
             if ( response != null ) {
                 //Log.d(TAG, "transceive successful. commandResponse = " + Util.getHexString(response) + "\n");
             } else {
