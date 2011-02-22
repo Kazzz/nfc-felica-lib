@@ -87,7 +87,7 @@ public class ReadResponse extends CommandResponse {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append("FeliCa レスポンス　パケット \n");
+        sb.append("FeliCa Read Response \n");
         sb.append(" コマンド名 :" + FeliCaLib.commandMap.get(this.responseCode)  +  "\n");
         sb.append(" データ長 : " + Util.getHexString(this.length) + "\n");
         sb.append(" コマンドコード : " + Util.getHexString(this.responseCode) +  "\n");

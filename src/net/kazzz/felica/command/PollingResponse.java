@@ -37,8 +37,13 @@ public class PollingResponse extends CommandResponse {
      */
     public PollingResponse(CommandResponse response) {
         super(response);
-        this.pmm = new PMm(Arrays.copyOfRange(this.data, 0, 8));
-        this.requestData = Arrays.copyOfRange(this.data, 8, data.length);
+        if ( this.data != null && this.data.length >= 8 ) {
+            this.pmm = new PMm(Arrays.copyOfRange(this.data, 0, 8));
+            this.requestData = Arrays.copyOfRange(this.data, 8, data.length);
+        } else {
+            this.pmm = null;
+            this.requestData = null;
+        }
     }
     /**
      * PMmを取得します

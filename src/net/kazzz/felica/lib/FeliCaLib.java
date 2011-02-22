@@ -11,9 +11,6 @@
  */
 package net.kazzz.felica.lib;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -22,9 +19,10 @@ import java.util.Map;
 import net.kazzz.felica.FeliCaException;
 import net.kazzz.felica.IFeliCaByteData;
 import net.kazzz.felica.command.IFeliCaCommand;
-import android.nfc.NfcAdapter;
+import net.kazzz.nfc.NfcException;
+import net.kazzz.nfc.NfcWrapper;
+import android.os.Parcel;
 import android.os.Parcelable;
-import android.util.Log;
 
 /**
  * FeliCaカードにアクセスするためのデータと操作をライブラリィとして提供します
@@ -44,7 +42,7 @@ import android.util.Log;
  *
  */
 
-public class FeliCaLib {
+public final class FeliCaLib {
     static final String TAG = "FeliCaLib";
     
     //polling
@@ -91,7 +89,52 @@ public class FeliCaLib {
     public static final byte COMMAND_WRITE = 0x16;
     public static final byte RESPONSE_WRITE = 0x17;
 
+    // システムコード
+    public static final int SYSTEMCODE_ANY = 0xffff;         // ANY
+    public static final int SYSTEMCODE_FELICA_LITE = 0x88b4; // FeliCa Lite
+    public static final int SYSTEMCODE_COMMON = 0xfe00;      // 共通領域
+    public static final int SYSTEMCODE_CYBERNE = 0x0003;     // サイバネ領域
+    public static final int SYSTEMCODE_EDY = 0xfe00;         // Edy (=共通領域)
+    public static final int SYSTEMCODE_SUICA = 0x0003;       // Suica (=サイバネ領域)
+    public static final int SYSTEMCODE_PASMO = 0x0003;       // Pasmo (=サイバネ領域)
     
+    // サービスコード suica/pasmo (little endian)
+    public static final int SERVICE_SUICA_INOUT = 0x108f;           // SUICA/PASMO 入退場記録
+    public static final int SERVICE_SUICA_HISTORY = 0x090f;         // SUICA/PASMO履歴
+    public static final int SERVICE_FELICA_LITE_READONLY = 0x0b00;  // FeliCa Lite RO権限 
+    public static final int SERVICE_FELICA_LITE_READWRITE = 0x0900; // FeliCa Lite RW権限
+
+    
+    //アクセス属性 (サービスコードの下6ビット
+    public static final int RANDOM_RW_AUTH = 0x08;   // ランダムサービス(リード/ライト:認証必要) 001000b
+    public static final int RANDOM_RW_WOAUTH = 0x09; // ランダムサービス(リード/ライト:認証不要) 001001b
+    public static final int RANDOM_RO_AUTH = 0x0a;   // ランダムサービス(リードオンリー:認証必要) 001010b
+    public static final int RANDOM_RO_WOAUTH = 0x0b; // ランダムサービス(リードオンリー:認証不要) 001011b
+
+    public static final int CYCLIC_RW_AUTH = 0x0c;   // サイクリックサービス(リード/ライト:認証必要) 001100b
+    public static final int CYCLIC_RW_WOAUTH = 0x0d; // サイクリックサービス(リード/ライト:認証不要) 001101b
+    public static final int CYCLIC_RO_AUTH = 0x0e;   // サイクリックサービス(リードオンリー:認証必要) 000111b
+    public static final int CYCLIC_RO_WOAUTH = 0x0f; // サイクリックサービス(リードオンリー:認証不要) 001111b
+
+    public static final int PARSE_DR_AUTH = 0x10;      // パースサービス(ダイレクト:認証必要) 010000b
+    public static final int PARSE_DR_WOAUTH = 0x11;    // パースサービス(ダイレクト:認証不要) 010001b
+    public static final int PARSE_CB_DEC_AUTH = 0x12;  // パースサービス(キャッシュバック/デクリメント:認証必要) 010010b
+    public static final int PARSE_CB_DEC_WOAUTH = 0x13;// パースサービス(キャッシュバック/デクリメント:認証不要) 010011b
+    public static final int PARSE_DEC_AUTH = 0x14;     // パースサービス(デクリメント:認証必要) 010100b
+    public static final int PARSE_DEC_WOAUTH = 0x15;   // パースサービス(デクリメント:認証不要) 010101b
+    public static final int PARSE_RO_AUTH = 0x16;      // パースサービス(リードオンリー:認証必要) 010100b
+    public static final int PARSE_RO_WOAUTH = 0x17;    // パースサービス(リードオンリー:認証不要) 010101b
+    
+
+    public static final int STATUSFLAG1_NORMAL = 0x00; //正常終了 
+    public static final int STATUSFLAG1_ERROR = 0xff;  //エラー　(ブロック番号に依らない)
+
+    public static final int STATUSFLAG2_NORMAL = 0x00;          //正常終了
+    public static final int STATUSFLAG2_ERROR_LENGTH    = 0x01; 
+    public static final int STATUSFLAG2_ERROR_FLOWN     = 0x02; 
+    public static final int STATUSFLAG2_ERROR_MEMORY    = 0x70; 
+    public static final int STATUSFLAG2_ERROR_WRITELIMIT= 0x71; 
+   
     public static final Map<Byte, String> commandMap = new HashMap<Byte, String>();
     
     //command code and name dictionary
@@ -256,7 +299,7 @@ public class FeliCaLib {
          * @param response 他のレスポンスをセット
          */
         public CommandResponse(CommandResponse response) {
-            this(response.getBytes());
+            this(response != null ? response.getBytes() : null);
         }
         /**
          * コンストラクタ
@@ -264,11 +307,19 @@ public class FeliCaLib {
          * @param data コマンド実行結果で戻ったバイト列をセット
          */
         public CommandResponse(byte[] data) {
-            this.rawData = data;
-            this.length = data[0]; 
-            this.responseCode = data[1];
-            this.idm = new IDm(Arrays.copyOfRange(data, 2, 10));
-            this.data = Arrays.copyOfRange(data, 10, data.length);
+            if ( data != null ) {
+                this.rawData = data;
+                this.length = data[0]; 
+                this.responseCode = data[1];
+                this.idm = new IDm(Arrays.copyOfRange(data, 2, 10));
+                this.data = Arrays.copyOfRange(data, 10, data.length);
+            } else {
+                this.rawData = null;
+                this.length = 0; 
+                this.responseCode = 0;
+                this.idm = null;
+                this.data = null;
+            }
         }
         /* (non-Javadoc)
          * @see net.felica.IFeliCaCommand#getIDm()
@@ -308,9 +359,30 @@ public class FeliCaLib {
      * @date 2011/01/20
      * @since Android API Level 9
      */
-    public static class IDm implements IFeliCaByteData {
+    public static class IDm implements Parcelable, IFeliCaByteData {
+        /** Parcelable need CREATOR field **/ 
+        public static final Parcelable.Creator<IDm> CREATOR = 
+            new Parcelable.Creator<IDm>() {
+                public IDm createFromParcel(Parcel in) {
+                    return new IDm(in);
+                }
+                
+                public IDm[] newArray(int size) {
+                    return new IDm[size];
+                }
+            };
         final byte[] manufactureCode;
         final byte[] cardIdentification;
+        /**
+         * コンストラクタ
+         * @param in 入力するパーセル化オブジェクトをセット
+         */
+        public IDm(Parcel in) {
+            this.manufactureCode = new byte[in.readInt()];
+            in.readByteArray(this.manufactureCode);
+            this.cardIdentification = new byte[in.readInt()];
+            in.readByteArray(this.cardIdentification);
+        }
         /**
          * コンストラクタ 
          * @param bytes IDmの格納されているバイト列をセットします
@@ -320,7 +392,26 @@ public class FeliCaLib {
             this.cardIdentification = 
                 new byte[]{bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]};
         }
-        
+        /* (non-Javadoc)
+         * @see android.os.Parcelable#describeContents()
+         */
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+        /* (non-Javadoc)
+         * @see android.os.Parcelable#writeToParcel(android.os.Parcel, int)
+         */
+        @Override
+        public void writeToParcel(Parcel dest, int flags) {
+            //配列長を先に書きだしておく
+            dest.writeInt(this.manufactureCode.length);
+            dest.writeByteArray(this.manufactureCode);
+            
+            //配列長を先に書きだしておく
+            dest.writeInt(this.cardIdentification.length);
+            dest.writeByteArray(this.cardIdentification);
+        }
         /* (non-Javadoc)
          * @see net.felica.IFeliCaByteData#getBytes()
          */
@@ -331,7 +422,7 @@ public class FeliCaLib {
             buff.put(this.manufactureCode).put(this.cardIdentification);
             return buff.array();
         }
-
+        
         /* (non-Javadoc)
          * @see java.lang.Object#toString()
          */
@@ -356,10 +447,32 @@ public class FeliCaLib {
      * @date 2011/01/20
      * @since Android API Level 9
      */
-   public static class PMm implements IFeliCaByteData {
+    public static class PMm implements Parcelable, IFeliCaByteData {
+        /** Parcelable need CREATOR field **/ 
+        public static final Parcelable.Creator<PMm> CREATOR = 
+            new Parcelable.Creator<PMm>() {
+                public PMm createFromParcel(Parcel in) {
+                    return new PMm(in);
+                }
+                
+                public PMm[] newArray(int size) {
+                    return new PMm[size];
+                }
+            };
         final byte[] icCode;              // ROM種別, IC種別
         final byte[] maximumResponseTime; // 最大応答時間
         /**
+         * コンストラクタ
+         * @param in 入力するパーセル化オブジェクトをセット
+         */
+        public PMm(Parcel in) {
+            this.icCode = new byte[in.readInt()];
+            in.readByteArray(this.icCode);
+            
+            this.maximumResponseTime = new byte[in.readInt()];
+            in.readByteArray(this.maximumResponseTime);
+        }
+       /**
          * コンストラクタ
          * @param bytes バイト列をセット
          */
@@ -367,6 +480,26 @@ public class FeliCaLib {
             this.icCode = new byte[]{bytes[0], bytes[1]};
             this.maximumResponseTime = 
                 new byte[]{bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]};
+        }
+        /* (non-Javadoc)
+         * @see android.os.Parcelable#describeContents()
+         */
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+        /* (non-Javadoc)
+         * @see android.os.Parcelable#writeToParcel(android.os.Parcel, int)
+         */
+        @Override
+        public void writeToParcel(Parcel dest, int flags) {
+            //配列長を先に書きだす
+            dest.writeInt(this.icCode.length);
+            dest.writeByteArray(this.icCode);
+
+            //配列長を先に書きだす
+            dest.writeInt(this.maximumResponseTime.length);
+            dest.writeByteArray(this.maximumResponseTime);
         }
         /* (non-Javadoc)
          * @see net.felica.IFeliCaByteData#getBytes()
@@ -442,30 +575,89 @@ public class FeliCaLib {
      * @date 2011/01/20
      * @since Android API Level 9
      */
-     public static class ServiceCode implements IFeliCaByteData {
+     public static class ServiceCode {
          final byte[] serviceCode;
+         final byte[] serviceCodeLE; // little endian
          /**
           * コンストラクタ
           * @param bytes バイト列をセット
           */
          public ServiceCode(byte[] bytes) {
              this.serviceCode = bytes;
+             if (bytes.length == 2) {
+                 this.serviceCodeLE = new byte[] {bytes[1], bytes[0]};
+             } else {
+                 this.serviceCodeLE = null;
+             }
          }
-         /* (non-Javadoc)
-          * @see net.felica.IFeliCaByteData#getBytes()
+         public ServiceCode(int serviceCode) {
+             this(new byte[]{(byte) (serviceCode & 0xff), (byte) (serviceCode >> 8)});
+         }
+         
+         /* 
+          * サービスコードをバイト列として返します。
+          * @return サービスコードのバイト列表現
           */
-         @Override
          public byte[] getBytes() {
              return this.serviceCode;
          }
-
-         /* (non-Javadoc)
-          * @see java.lang.Object#toString()
+         /**
+          * このサービスコードは、認証が必要か否かを検査します
+          * @return boolean 認証が必要ならTrueが戻ります
+          */
+         public boolean encryptNeeded() {
+             boolean ret = false;
+             if (serviceCodeLE != null) {
+                 ret = (serviceCodeLE[1] & 0x1) == 0;
+             }
+             return ret;
+         }
+         
+         /**
+          * このサービスコードは書込み可能か否かを検査します
+          * @return boolean 書込み可能ならTrueが戻ります
+          */
+         public boolean isWritable() {
+             boolean ret = false;
+             if (serviceCodeLE != null) {
+                 int accessInfo = serviceCodeLE[1] & 0x3F; // 下位6bitがアクセス情報
+                 ret = (accessInfo & 0x2) == 0 || accessInfo == 0x13 || accessInfo==0x12; 
+             }
+             return ret;
+         }
+         
+         /** 
+          * サービスコードのアクセス権の意味は、JIS_X_6319_4 を参照しました。
+          * @author morishita_2
           */
          @Override
          public String toString() {
              StringBuilder sb = new StringBuilder();
-             sb.append("サービスコード : " + Util.getHexString(this.serviceCode) + "\n");
+             sb.append(Util.getHexString(serviceCodeLE));
+             if (serviceCodeLE != null) {
+                 int accessInfo = serviceCodeLE[1] & 0x3F; // 下位6bitがアクセス情報
+                 switch (accessInfo) {
+                 case 0x09: sb.append(" 固定長RW"); break; // RW: ReadWrite
+                 case 0x0b: sb.append(" 固定長RO"); break; // RO: ReadOnly
+                 case 0x0d: sb.append(" 循環RW"); break;
+                 case 0x0f: sb.append(" 循環RO"); break;
+                 case 0x11: sb.append(" 加減算直接"); break;
+                 case 0x13: sb.append(" 加減算戻入"); break;
+                 case 0x15: sb.append(" 加減算減算"); break;
+                 case 0x17: sb.append(" 加減算RO"); break;
+                 //
+                 case 0x08: sb.append(" 固定長RW(Locked)"); break; // RW: ReadWrite
+                 case 0x0a: sb.append(" 固定長RO(Locked)"); break; // RO: ReadOnly
+                 case 0x0c: sb.append(" 循環RW(Locked)"); break;
+                 case 0x0e: sb.append(" 循環RO(Locked)"); break;
+                 case 0x10: sb.append(" 加減算直接(Locked)"); break;
+                 case 0x12: sb.append(" 加減算戻入(Locked)"); break;
+                 case 0x14: sb.append(" 加減算減算(Locked)"); break;
+                 case 0x16: sb.append(" 加減算RO(Locked)"); break;
+                 }
+                 
+             }
+             //sb.append("\n");
              return sb.toString();
          }
      }
@@ -478,7 +670,7 @@ public class FeliCaLib {
      * @date 2011/01/20
      * @since Android API Level 9
      */
-    public class Service implements IFeliCaByteData {
+    public static class Service implements IFeliCaByteData {
         final ServiceCode[] serviceCodes;
         final BlockListElement[] blockListElements;
         /**
@@ -537,12 +729,26 @@ public class FeliCaLib {
     
    
     /**
-     * FeliCa FileSystemにおけるBlock(ブロック)を提供します
-     * 
+     * FeliCa FileSystemにおけるBlock(ブロック)を抽象化したクラス提供します
+     * @author Kazzz
+     * @date 2011/2/20
      * @since Android API Level 9
      */
-    public class Block implements IFeliCaByteData {
-        byte[] data = new byte[16];
+    public static class Block implements IFeliCaByteData {
+        final byte[] data;
+        /**
+         * デフォルトコンストラクタ
+         */
+        public Block() {
+            this.data = new byte[16];
+        }
+        /**
+         * コンストラクタ
+         * @param data ブロックを構成する
+         */
+        public Block(byte[] data) {
+            this.data = data;
+        }
         /* (non-Javadoc)
          * @see net.felica.IFeliCaByteData#getBytes()
          */
@@ -557,9 +763,10 @@ public class FeliCaLib {
         @Override
         public String toString() {
             StringBuilder sb = new StringBuilder();
-            sb.append("データ : " + Util.getHexString(this.data) + "\n");
+            sb.append("ブロック : " + Util.getHexString(this.data) + "\n");
             return sb.toString();
-        }   }
+        }  
+    }
     
     /**
      * Felica FileSystemにおけるBlockListElement(2byte又は3byte)クラスを提供します
@@ -568,7 +775,7 @@ public class FeliCaLib {
      * @date 2011/01/20
      * @since Android API Level 9
      */
-    public class BlockListElement implements IFeliCaByteData {
+    public static class BlockListElement implements IFeliCaByteData {
         public static final byte LENGTH_2_BYTE = (byte) 0x80;
         public static final byte LENGTH_3_BYTE = (byte) 0x00; 
         public static final byte ACCESSMODE_DECREMENT = 0x00; 
@@ -627,17 +834,88 @@ public class FeliCaLib {
             return sb.toString();
         }   
     }
-    
-   /**
-    * コマンドを実行します
-    *
-    * <pre>Android 2.3の隠しクラス(@hide)に依存しています。今後の仕様変更で使えなくなるリスクを考慮してください</pre>
-    * 
-    * @param Tag 隠しクラスである android.nfc.Tag クラスの参照をセットします
-    * @param commandPacket 実行するコマンドパケットをセットします
-    * @return CommandResponse コマンドの実行結果が戻ります 
-    * @throws FeliCaException コマンドの発行に失敗した場合にスローされます
-    */
+    /**
+     * FeliCa Liteで使用されるメモリコンフィグレーションブロック(16byte)を抽象化したクラスを提供します
+     * 
+     * @author Kazzz
+     * @date 2011/02/21
+     * @since Android API Level 9
+     *
+     */
+    public static class MemoryConfigurationBlock extends Block implements IFeliCaByteData {
+        /**
+         * コンストラクタ
+         * @param mcData MC領域のデータブロック(16バイト)をセット
+         */
+        public MemoryConfigurationBlock (byte[] mcData) {
+            super(mcData);
+        }
+        /**
+         * NDEFをサポートするか否かを検査します
+         * @return boolean NDEFをサポートしている場合trueが戻ります
+         */
+        public boolean isNdefSupport() {
+            if ( this.data == null ) return false;
+            return ( this.data[3] & (byte)0xff ) == 1; 
+        }
+        /**
+         * Ndefをサポートするか否かを設定します
+         * @param ndefSupport Ndefをサポートする場合はtrueをセットします
+         */
+        public void setNdefSupport(boolean ndefSupport) {
+            this.data[3] = (byte) (ndefSupport ? 1 : 0);
+        }
+        /**
+         * ブロック中の領域 (0x00h～0x0fh)が書きこみ可能な否かを検査します
+         * 
+         * @param addr 調べたいブロック番号へのアドレスをセット (複数セットした場合はand演算されます)
+         * @return　書き込み可能な場合にはtrueが戻ります
+         */
+        public boolean isWritable(int... addrs) {
+            if ( this.data == null ) return false;
+            
+            boolean result = true;
+            for ( int a : addrs ) {
+                byte b = (byte) ((a & 0xff) + 1);
+                if ( a < 8 ) {
+                    result &= (this.data[0] & b ) == b;
+                    continue;
+                } else 
+                if ( a < 16 ) {
+                    result &= (this.data[1] & b ) == b;
+                    continue;
+                } else 
+                result &= (this.data[2] & b ) == b;
+            }
+            return result;
+        }
+        /* (non-Javadoc)
+         * @see java.lang.Object#toString()
+         */
+        @Override
+        public String toString() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("メモリコンフィグレーションブロック(MC)\n");
+            sb.append("  NdefSupport  : " + this.isNdefSupport() + "\n");
+            sb.append("  MemoryConfig : \n");
+            for ( int i = 0; i < this.data.length; i++ ) {
+                sb.append("    ブロック  " + i + " = "  
+                        + (this.isWritable(i) ? "1:RW" : "0:RO") + "\n");
+            }
+            return sb.toString();
+        }   
+        
+    }
+    /**
+     * コマンドを実行します
+     *
+     * <pre>Android 2.3の隠しクラス(@hide)に依存しています。今後の仕様変更で使えなくなるリスクを考慮してください</pre>
+     * 
+     * @param tag 隠しクラスである android.nfc.Tag クラスの参照をセットします
+     * @param commandPacket 実行するコマンドパケットをセットします
+     * @return CommandResponse コマンドの実行結果が戻ります 
+     * @throws FeliCaException コマンドの発行に失敗した場合にスローされます
+     */
     public static final CommandResponse execute(Parcelable tag, CommandPacket commandPacket) throws FeliCaException {
         byte[] result = executeRaw(tag, commandPacket.getBytes());
         return new CommandResponse(result);
@@ -648,54 +926,14 @@ public class FeliCaLib {
      * <pre>Android 2.3の隠しクラス(@hide)に依存しています。今後の仕様変更で使えなくなるリスクを考慮してください</pre>
      * 
      * @param Tag 隠しクラスである android.nfc.Tag クラスの参照をセットします
-     * @param commandPacket 実行するコマンドパケットをセットします
+     * @param data コマンドにセットするデータをセットします
      * @return byte[] コマンドの実行結果バイト列で戻ります 
      * @throws FeliCaException コマンドの発行に失敗した場合にスローされます
      */
-    public static final byte[] executeRaw(Parcelable tag, byte[] commandPacket) throws FeliCaException {
+    public static final byte[] executeRaw(Parcelable tag, byte[] data) throws FeliCaException {
         try {
-            NfcAdapter adapter = NfcAdapter.getDefaultAdapter();
-            // android.nfc.RawTagConnectionを生成
-            Class<?> tagClass = Class.forName("android.nfc.Tag");
-            Method createRawTagConnection = 
-                adapter.getClass().getMethod("createRawTagConnection", tagClass);
-            Object rawTagConnection = createRawTagConnection.invoke(adapter, tag);
-
-            // android.nfc.RawTagConnection#mTagServiceフィールドを取得 (NfcService.INfcTagへの参照が入っている)
-            Field f = rawTagConnection.getClass().getDeclaredField("mTagService");
-            f.setAccessible(true);
-            Object tagService = f.get(rawTagConnection);
-
-            //ServiceHandleを取得
-            f = tagClass.getDeclaredField("mServiceHandle");
-            f.setAccessible(true);
-            int serviceHandle = (Integer) f.get(tag);  
-            
-            //INfcTag#transceive
-            Method transceive = tagService.getClass().getMethod("transceive", Integer.TYPE, byte[].class);
-
-            //Log.d(TAG, "invoking transceive commandPacket :" +  Util.getHexString(commandPacket) + "\n");
-            byte[] response = (byte[])transceive.invoke(tagService, serviceHandle, commandPacket);
-            if ( response != null ) {
-                //Log.d(TAG, "transceive successful. commandResponse = " + Util.getHexString(response) + "\n");
-            } else {
-                Log.d(TAG, "transceive fail. result null");
-                throw new FeliCaException("execute transceive fail" + "\n");
-            }
-            return response;
-        } catch (ClassNotFoundException e){
-            throw new FeliCaException(e);
-        } catch (NoSuchMethodException e){
-            throw new FeliCaException(e);
-        } catch (SecurityException e){
-            throw new FeliCaException(e);
-        } catch (NoSuchFieldException e){
-            throw new FeliCaException(e);
-        } catch (IllegalAccessException e){
-            throw new FeliCaException(e);
-        } catch (IllegalArgumentException e){
-            throw new FeliCaException(e);
-        } catch (InvocationTargetException e){
+            return NfcWrapper.transceive(tag, data);
+        } catch (NfcException e) {
             throw new FeliCaException(e);
         }
     }
