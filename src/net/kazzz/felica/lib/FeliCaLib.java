@@ -11,6 +11,7 @@
  */
 package net.kazzz.felica.lib;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -20,7 +21,9 @@ import net.kazzz.felica.FeliCaException;
 import net.kazzz.felica.IFeliCaByteData;
 import net.kazzz.felica.command.IFeliCaCommand;
 import net.kazzz.nfc.NfcException;
-import net.kazzz.nfc.NfcWrapper;
+import android.nfc.Tag;
+import android.nfc.TagLostException;
+import android.nfc.tech.NfcF;
 import android.os.Parcel;
 import android.os.Parcelable;
 
@@ -909,34 +912,54 @@ public final class FeliCaLib {
     /**
      * コマンドを実行します
      *
-     * <pre>Android 2.3の隠しクラス(@hide)に依存しています。今後の仕様変更で使えなくなるリスクを考慮してください</pre>
-     * 
-     * @param tag 隠しクラスである android.nfc.Tag クラスの参照をセットします
+     * @param Tag Tagクラスの参照をセットします
      * @param commandPacket 実行するコマンドパケットをセットします
      * @return CommandResponse コマンドの実行結果が戻ります 
      * @throws FeliCaException コマンドの発行に失敗した場合にスローされます
      */
-    public static final CommandResponse execute(Parcelable tag, CommandPacket commandPacket) throws FeliCaException {
+    public static final CommandResponse execute(Tag tag, CommandPacket commandPacket) throws FeliCaException {
         byte[] result = executeRaw(tag, commandPacket.getBytes());
         return new CommandResponse(result);
     }
     /**
      * Rawデータを使ってコマンドを実行します
      * 
-     * <pre>Android 2.3の隠しクラス(@hide)に依存しています。今後の仕様変更で使えなくなるリスクを考慮してください</pre>
-     * 
-     * @param Tag 隠しクラスである android.nfc.Tag クラスの参照をセットします
+     * @param Tag Tagクラスの参照をセットします
      * @param data コマンドにセットするデータをセットします
      * @return byte[] コマンドの実行結果バイト列で戻ります 
      * @throws FeliCaException コマンドの発行に失敗した場合にスローされます
      */
-    public static final byte[] executeRaw(Parcelable tag, byte[] data) throws FeliCaException {
+    public static final byte[] executeRaw(Tag tag, byte[] data) throws FeliCaException {
         try {
-            return NfcWrapper.transceive(tag, data);
+            return transceive(tag, data);
         } catch (NfcException e) {
             throw new FeliCaException(e);
         }
     }
-   
-
+    /**
+     * INfcTag#transceiveを実行します
+     * 
+     * @param Tag Tagクラスの参照をセットします
+     * @param commandPacket 実行するコマンドパケットをセットします
+     * @return byte[] コマンドの実行結果バイト列で戻ります 
+     * @throws FeliCaException コマンドの発行に失敗した場合にスローされます
+     */
+    public static final byte[] transceive(Tag tag, byte[] data) throws NfcException {
+        //NfcFはFeliCa
+        NfcF nfcF = NfcF.get(tag);
+        if ( nfcF == null ) throw new NfcException("tag is not FeliCa(NFC-F) ");
+        try {
+            nfcF.connect();
+            try {
+                return nfcF.transceive(data);
+            } finally {
+                nfcF.close();
+            }
+        } catch (TagLostException e) {
+            return null; //Tag Lost
+        } catch (IOException e) {
+            throw new NfcException(e);
+        }
+    }
+    
 }
