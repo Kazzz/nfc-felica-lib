@@ -34,6 +34,7 @@ import net.kazzz.felica.lib.FeliCaLib.ServiceCode;
 import net.kazzz.felica.lib.FeliCaLib.SystemCode;
 import net.kazzz.nfc.NfcException;
 import net.kazzz.nfc.NfcTag;
+import android.nfc.Tag;
 import android.os.Parcel;
 import android.os.Parcelable;
 
@@ -59,7 +60,7 @@ public class FeliCaTag extends NfcTag {
             }
         };
 
-    protected Parcelable nfcTag;
+    protected Tag nfcTag;
     protected IDm idm;
     protected PMm pmm;
     /**
@@ -72,19 +73,19 @@ public class FeliCaTag extends NfcTag {
     /**
      * コンストラクタ
      * 
-     * @param tagService NFCTagへの参照をセット
+     * @param nfcTag NFCTagへの参照をセット
      */
     public FeliCaTag(Parcelable nfcTag) {
-        this.nfcTag =  nfcTag;
+        this.nfcTag =  (Tag)nfcTag;
     }
     /**
      * コンストラクタ
      * 
-     * @param tagService NFCTagへの参照をセット
+     * @param nfcTag NFCTagへの参照をセット
      * @param idm FeliCa IDmをセット
      * @param pmm FeliCa PMmをセット
      */
-    public FeliCaTag(Parcelable nfcTag, IDm idm, PMm pmm) {
+    public FeliCaTag(Tag nfcTag, IDm idm, PMm pmm) {
         this.nfcTag =  nfcTag;
         this.idm = idm;
         this.pmm = pmm;

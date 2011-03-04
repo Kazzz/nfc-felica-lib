@@ -11,6 +11,7 @@
  */
 package net.kazzz.felica.lib;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -20,16 +21,18 @@ import net.kazzz.felica.FeliCaException;
 import net.kazzz.felica.IFeliCaByteData;
 import net.kazzz.felica.command.IFeliCaCommand;
 import net.kazzz.nfc.NfcException;
-import net.kazzz.nfc.NfcWrapper;
+import android.nfc.Tag;
+import android.nfc.TagLostException;
+import android.nfc.tech.NfcF;
 import android.os.Parcel;
 import android.os.Parcelable;
 
 /**
- * FeliCaカードにアクセスするためのデータと操作をライブラリィとして提供します
+ * FeliCa、FeliCa Liteデバイスにアクセスするためのコマンドとデータ操作をライブラリィとして提供します
  * 
  * <pre>
  * ※ 「FeliCa」は、ソニー株式会社が開発した非接触ICカードの技術方式です。
- * ※ 「FeliCa」、「FeliCaポケット」、「FeliCaランチャー」は、ソニー株式会社の登録商標です。
+ * ※ 「FeliCa」、「FeliCa Lite」、「FeliCa Plug」、「FeliCaポケット」、「FeliCaランチャー」は、ソニー株式会社の登録商標です。
  * ※ 「Suica」は東日本旅客鉄道株式会社の登録商標です。
  * ※ 「PASMO」は、株式会社パスモの登録商標です。
  * 
@@ -37,8 +40,8 @@ import android.os.Parcelable;
  * </pre>
  * 
  * @author Kazzz
- * @date 2011/01/16
- * @since Android API Level 9
+ * @date 2011/03/04
+ * @since Android API Level 10
  *
  */
 
@@ -171,7 +174,7 @@ public final class FeliCaLib {
      * @since Android API Level 9
      */
     public static class CommandPacket implements IFeliCaCommand {
-        protected final byte length;     //全体のデータ長 
+        protected final int length;     //コマンド全体のデータ長 
         protected final byte commandCode;//コマンドコード
         protected final IDm  idm;        //FeliCa IDm
         protected final byte[] data;     //コマンドデータ
@@ -209,7 +212,10 @@ public final class FeliCaLib {
                 this.idm = null;
                 this.data = Arrays.copyOfRange(data, 0, data.length);
             }
-            this.length = (byte)(data.length + 2);
+            this.length = data.length + 2;
+            
+            if ( this.length > 255 )
+                throw new FeliCaException("command data too long (less than 255Byte)");        
         }
         /**
          * コンストラクタ
@@ -225,7 +231,9 @@ public final class FeliCaLib {
             this.commandCode = commandCode;
             this.idm = idm;
             this.data = data;
-            this.length = (byte)(idm.getBytes().length + data.length + 2);
+            this.length = idm.getBytes().length + data.length + 2;
+            if ( this.length > 255 )
+                throw new FeliCaException("command data too long (less than 255byte)");        
         }
         /**
          * コンストラクタ
@@ -241,7 +249,9 @@ public final class FeliCaLib {
             this.commandCode = commandCode;
             this.idm = new IDm(idm);
             this.data = data;
-            this.length = (byte)(idm.length + data.length + 2);
+            this.length = idm.length + data.length + 2;
+            if ( this.length > 255 )
+                throw new FeliCaException("command data too long (less than 255byte)");        
         }
         
         /* (non-Javadoc)
@@ -257,10 +267,11 @@ public final class FeliCaLib {
          */
         public byte[] getBytes() {
             ByteBuffer buff = ByteBuffer.allocate(this.length);
+            byte length = (byte)this.length;
             if ( this.idm != null ) {
-                buff.put(this.length).put(this.commandCode).put(this.idm.getBytes()).put(this.data);
+                buff.put(length).put(this.commandCode).put(this.idm.getBytes()).put(this.data);
             } else {
-                buff.put(this.length).put(this.commandCode).put(this.data);
+                buff.put(length).put(this.commandCode).put(this.data);
             }
             return buff.array();
         }
@@ -272,7 +283,7 @@ public final class FeliCaLib {
            StringBuilder sb = new StringBuilder();
            sb.append("FeliCa コマンドパケット \n");
            sb.append(" コマンド名:" + commandMap.get(this.commandCode)  +  "\n");
-           sb.append(" データ長: " + Util.getHexString(this.length) + "\n");
+           sb.append(" データ長: " + Util.getHexString((byte)(this.length & 0xff)) + "\n");
            sb.append(" コマンドコード : " + Util.getHexString(this.commandCode) +  "\n");
            if ( this.idm != null )
                sb.append(" " + this.idm.toString() + "\n");
@@ -289,7 +300,7 @@ public final class FeliCaLib {
      */
     public static class CommandResponse implements IFeliCaCommand {
         protected final byte[] rawData;
-        protected final byte length;      //全体のデータ長 (FeliCaには無い)
+        protected final int length;      //全体のデータ長 (FeliCaには無い)
         protected final byte responseCode;//コマンドレスポンスコード)
         protected final IDm idm;          //FeliCa IDm
         protected final byte[] data;      //コマンドデータ
@@ -309,7 +320,7 @@ public final class FeliCaLib {
         public CommandResponse(byte[] data) {
             if ( data != null ) {
                 this.rawData = data;
-                this.length = data[0]; 
+                this.length = data[0] & 0xff; 
                 this.responseCode = data[1];
                 this.idm = new IDm(Arrays.copyOfRange(data, 2, 10));
                 this.data = Arrays.copyOfRange(data, 10, data.length);
@@ -344,7 +355,7 @@ public final class FeliCaLib {
            sb.append(" \n\n");
            sb.append("FeliCa レスポンスパケット \n");
            sb.append(" コマンド名:" + commandMap.get(this.responseCode)  +  "\n");
-           sb.append(" データ長: " + Util.getHexString(this.length) + "\n");
+           sb.append(" データ長: " + Util.getHexString((byte)(this.length & 0xff)) + "\n");
            sb.append(" レスポンスコード: " + Util.getHexString(this.responseCode) + "\n");
            sb.append(" "+ this.idm.toString() + "\n");
            sb.append(" データ: " + Util.getHexString(this.data) + "\n");
@@ -909,34 +920,54 @@ public final class FeliCaLib {
     /**
      * コマンドを実行します
      *
-     * <pre>Android 2.3の隠しクラス(@hide)に依存しています。今後の仕様変更で使えなくなるリスクを考慮してください</pre>
-     * 
-     * @param tag 隠しクラスである android.nfc.Tag クラスの参照をセットします
+     * @param Tag Tagクラスの参照をセットします
      * @param commandPacket 実行するコマンドパケットをセットします
      * @return CommandResponse コマンドの実行結果が戻ります 
      * @throws FeliCaException コマンドの発行に失敗した場合にスローされます
      */
-    public static final CommandResponse execute(Parcelable tag, CommandPacket commandPacket) throws FeliCaException {
+    public static final CommandResponse execute(Tag tag, CommandPacket commandPacket) throws FeliCaException {
         byte[] result = executeRaw(tag, commandPacket.getBytes());
         return new CommandResponse(result);
     }
     /**
      * Rawデータを使ってコマンドを実行します
      * 
-     * <pre>Android 2.3の隠しクラス(@hide)に依存しています。今後の仕様変更で使えなくなるリスクを考慮してください</pre>
-     * 
-     * @param Tag 隠しクラスである android.nfc.Tag クラスの参照をセットします
+     * @param Tag Tagクラスの参照をセットします
      * @param data コマンドにセットするデータをセットします
      * @return byte[] コマンドの実行結果バイト列で戻ります 
      * @throws FeliCaException コマンドの発行に失敗した場合にスローされます
      */
-    public static final byte[] executeRaw(Parcelable tag, byte[] data) throws FeliCaException {
+    public static final byte[] executeRaw(Tag tag, byte[] data) throws FeliCaException {
         try {
-            return NfcWrapper.transceive(tag, data);
+            return transceive(tag, data);
         } catch (NfcException e) {
             throw new FeliCaException(e);
         }
     }
-   
-
+    /**
+     * INfcTag#transceiveを実行します
+     * 
+     * @param Tag Tagクラスの参照をセットします
+     * @param commandPacket 実行するコマンドパケットをセットします
+     * @return byte[] コマンドの実行結果バイト列で戻ります 
+     * @throws FeliCaException コマンドの発行に失敗した場合にスローされます
+     */
+    public static final byte[] transceive(Tag tag, byte[] data) throws NfcException {
+        //NfcFはFeliCa
+        NfcF nfcF = NfcF.get(tag);
+        if ( nfcF == null ) throw new NfcException("tag is not FeliCa(NFC-F) ");
+        try {
+            nfcF.connect();
+            try {
+                return nfcF.transceive(data);
+            } finally {
+                nfcF.close();
+            }
+        } catch (TagLostException e) {
+            return null; //Tag Lost
+        } catch (IOException e) {
+            throw new NfcException(e);
+        }
+    }
+    
 }
